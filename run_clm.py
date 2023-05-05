@@ -35,7 +35,7 @@ import torch
 try:
     import torch_musa
 except ImportError:
-    print("import torch_musa error!")
+    pass
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
