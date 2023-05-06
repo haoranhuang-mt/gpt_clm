@@ -29,13 +29,17 @@ import os
 import random
 from itertools import chain
 from pathlib import Path
-
+import time
 import datasets
 import torch
 try:
     import torch_musa
 except ImportError:
-    pass
+    print("import torch_musa failed, check whether torch_musa exists")
+try:
+    import musa_torch_extension
+except ImportError:
+    print("import musa_torch_extension failed, check whether mtpytorch exists")
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
@@ -551,7 +555,9 @@ def main():
     total_batch_size = args.per_device_train_batch_size * args.gradient_accumulation_steps
 
     logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(train_dataset)}")
+    logger.info(f"  Train num examples = {len(train_dataset)}")
+    logger.info(f"  Evaluate num examples = {len(eval_dataset)}")
+    logger.info(f"  Test num examples = {len(test_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
@@ -590,9 +596,9 @@ def main():
     completed_steps = starting_epoch * num_update_steps_per_epoch
 
     for epoch in range(starting_epoch, args.num_train_epochs):
+        start_train = time.time()
         model.train()
-        if args.with_tracking:
-            total_loss = 0
+        total_loss = 0
         for step, batch in enumerate(train_dataloader):
             # We need to skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == starting_epoch:
@@ -607,9 +613,7 @@ def main():
             batch['labels'] = batch['labels'].to(device)
             outputs = model(**batch)
             loss = outputs.loss
-            # We keep track of the loss at each epoch
-            if args.with_tracking:
-                total_loss += loss.detach().float()
+            total_loss += loss.detach().float()
             loss.backward()
             optimizer.step()
             lr_scheduler.step()
@@ -641,7 +645,9 @@ def main():
         #         },
         #         step=completed_steps,
         #     )
-
+        train_time = time.time() - start_train
+        train_fps = len(train_dataloader.dataset) / train_time
+        logger.info(f"epoch {epoch}: train_loss: {total_loss.item() / len(train_dataloader):.3f}  train_time: {train_time:.3f}  train_fps: {train_fps:.3f}")
 
         evaluate(model, eval_dataloader, epoch, device, args)
         test(model, test_dataloader, epoch, device, args)
@@ -684,6 +690,7 @@ def main():
 def evaluate(model, eval_dataloader, epoch, device, args):
     model.eval()
     losses = []
+    start = time.time()
     for step, batch in enumerate(eval_dataloader):
         with torch.no_grad():
             batch['input_ids'] = batch['input_ids'].to(device)
@@ -700,12 +707,14 @@ def evaluate(model, eval_dataloader, epoch, device, args):
         perplexity = math.exp(eval_loss)
     except OverflowError:
         perplexity = float("inf")
-
-    logger.info(f"epoch {epoch}: perplexity: {perplexity} eval_loss: {eval_loss}")
+    eval_time = time.time() - start
+    eval_fps = len(eval_dataloader.dataset) / eval_time
+    logger.info(f"epoch {epoch}: perplexity: {perplexity:.3f} eval_loss: {eval_loss:.3f}  eval_time: {eval_time:.3f}  eval_fps: {eval_fps:.3f}")
 
 
 def test(model, test_dataloader, epoch, device, args):
     losses = []
+    start = time.time()
     for step, batch in enumerate(test_dataloader):
         with torch.no_grad():
             
@@ -723,8 +732,9 @@ def test(model, test_dataloader, epoch, device, args):
         perplexity = math.exp(test_loss)
     except OverflowError:
         perplexity = float("inf")
-
-    logger.info(f"epoch {epoch}: perplexity: {perplexity} test_loss: {test_loss}")
+    test_time = time.time() - start
+    test_fps = len(test_dataloader.dataset) / test_time
+    logger.info(f"epoch {epoch}: perplexity: {perplexity:.3f} test_loss: {test_loss:.3f} test_time: {test_time:.3f}  test_fps: {test_fps:.3f}")
     with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
         json.dump({"test_perplexity": perplexity}, f)
 
