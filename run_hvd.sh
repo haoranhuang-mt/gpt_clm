@@ -9,7 +9,6 @@
 #    --output_dir /data01/clm-output \
 #    --cache_dir /data01/gpt2-data/wikitext/wikitext-2-raw
 
-
 DATA=${DATADIR:-"/data01"}
 
 horovodrun -np 1 -H 127.0.0.1:1 python3 train_hvd_clm.py \
