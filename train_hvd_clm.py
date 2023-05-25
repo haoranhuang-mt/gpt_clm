@@ -34,7 +34,6 @@ import datasets
 import torch
 
 from accelerate import Accelerator, DistributedType
-from accelerate.logging import get_logger
 from accelerate.utils import set_seed
 from datasets import load_dataset
 from huggingface_hub import Repository, create_repo
@@ -55,13 +54,12 @@ from transformers import (
 from transformers.utils import check_min_version, get_full_repo_name, send_example_telemetry
 from transformers.utils.versions import require_version
 import horovod.torch as hvd
-from utils import TimeTicker, timecost_wrapper, load_ckpt, save_ckpt
+from utils import TimeTicker, timecost_wrapper, load_ckpt, save_ckpt, init_logs, logger
 import config
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 # check_min_version("4.28.0")
 
-logger = get_logger(__name__)
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
 
@@ -83,18 +81,6 @@ def import_patch(device: str):
         raise Exception(f"import musa patch exception: {e}")
 
 
-def init_logs():
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO,
-    )
-    
-    datasets.utils.logging.set_verbosity_warning()
-    transformers.utils.logging.set_verbosity_info()
-    datasets.utils.logging.set_verbosity_error()
-    transformers.utils.logging.set_verbosity_error()
-
     
 @timecost_wrapper
 def create_dataset(tokenizer):
@@ -113,8 +99,7 @@ def create_dataset(tokenizer):
                 split=f"train[{args.validation_split_percentage}%:]",
             )
 
-    print(f"raw datasets:{raw_datasets.keys()}")
-    print(f"type of tokenizer:", type(tokenizer))
+    logger.info(f"raw datasets:{raw_datasets.keys()}")
 
     column_names = raw_datasets["train"].column_names
     text_column_name = "text" if "text" in column_names else column_names[0]
@@ -184,18 +169,16 @@ def create_dataset(tokenizer):
 
 @timecost_wrapper
 def load_tokenizer():
-    print("load_tokenizer")
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, use_fast=not args.use_slow_tokenizer)
     elif args.model_name_or_path:
-        print("load_tokenizer from model_name_or_path")
         tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=not args.use_slow_tokenizer)
     else:
         raise ValueError(
             "You are instantiating a new tokenizer from scratch. This is not supported by this script."
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
-    print("tokenizer type:", type(tokenizer))
+    
     return tokenizer
 
 @timecost_wrapper
@@ -231,7 +214,11 @@ def main():
     import_patch(args.device)
 
     device = torch.device(args.device)
-    init_logs()
+    init_logs(args.log_dir, hvd.rank())
+    datasets.utils.logging.set_verbosity_warning()
+    transformers.utils.logging.set_verbosity_info()
+    datasets.utils.logging.set_verbosity_error()
+    transformers.utils.logging.set_verbosity_error()
 
     # If passed along, set the training seed now.
     if args.seed is not None:
@@ -359,7 +346,8 @@ def main():
                 if resume_step is not None and step < resume_step:
                     pass
 
-            with TimeTicker("step_train") as t:
+            cond =  step % 20
+            with TimeTicker("step_train", not cond) as t:
                 batch['input_ids'] = batch['input_ids'].to(device)
                 batch['attention_mask'] = batch['attention_mask'].to(device)
                 batch['labels'] = batch['labels'].to(device)
@@ -370,7 +358,7 @@ def main():
                 loss = outputs.loss
                 total_loss += loss.detach().float()
 
-                with TimeTicker("backward") as t:
+                with TimeTicker("backward", not cond) as t:
                    loss.backward()
 
                 has_nan = False

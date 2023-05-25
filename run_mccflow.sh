@@ -12,5 +12,6 @@ python3 train_hvd_clm.py \
     --per_device_eval_batch_size 3 \
     --checkpointing_steps 1000 \
     --output_dir $DATA/clm-output \
-    --cache_dir $DATA/cache \
-    --from_checkpoint_meta $DATA/checkpoints
+    --cache_dir $DATA/cache \ 
+    --from_checkpoint_meta $DATA/checkpoints \
+    --log_dir $DATA/logs

@@ -2,10 +2,25 @@ import json
 import os
 import uuid
 import time
-
 import torch
 
+import logging
+import time
+from accelerate.logging import get_logger
+
+logger = get_logger(__name__)
 CHECKPOINT_META_NAME = "checkpoint.meta"
+
+def init_logs(log_dir, rank):
+    cur_date  = time.strftime("%Y-%m-%d-%H-%M", time.localtime())
+    logging.basicConfig(
+        filename=os.path.join(log_dir, f"{cur_date}_train_{rank}.log"),
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        level=logging.INFO,
+    )
+
+
 
 def load_latest_ckpt_meta(ckpt: str):
     if len(ckpt) == 0:
@@ -37,7 +52,7 @@ def save_latest_ckpt_meta(ckpt: str, meta: dict):
 
         os.rename(tmp_file, ckpt)
     except Exception as e:
-        print("save_latest_ckpt_meta catch exception:", e)
+        logger.info("save_latest_ckpt_meta catch exception:", e)
 
     return
 
@@ -94,7 +109,7 @@ def timecost_wrapper(func):
         time_cost = end_time - start_time
 
         cost = {func.__name__ : time_cost}
-        print(f"metrics: {cost}")
+        logger.info(f"time cost statistics: {cost}")
         return result
     
     return wrapper
@@ -102,11 +117,12 @@ def timecost_wrapper(func):
 
 
 class TimeTicker:
-    def __init__(self, name):
+    def __init__(self, name, switch=True):
         self.start_time = None
         self.end_time = None
         self.time_cost = None
         self.name  = name
+        self.switch = switch
         self.reporter = None
 
     def __enter__(self):
@@ -116,4 +132,6 @@ class TimeTicker:
     def __exit__(self, exc_type, exc_value, traceback):
         self.end_time = time.time()
         self.time_cost = self.end_time - self.start_time
-        print(f"name:{self.name}, cost:{self.time_cost}")
+
+        if self.switch:
+            logger.info(f"time cost op:{self.name}, cost:{self.time_cost}")

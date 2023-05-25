@@ -162,6 +162,13 @@ def parse_args():
         required=True
     )
 
+    parser.add_argument(
+        "--log_dir",
+        type=str,
+        default="./logs",
+        help=("loggin output dir"),
+    )
+
     conf = parser.parse_args()
 
     # Sanity checks
